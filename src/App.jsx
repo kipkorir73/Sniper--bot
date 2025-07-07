@@ -4,9 +4,11 @@ import React, { useEffect, useState } from "react";
 const VOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
 const App = () => {
-  const [tickData, setTickData] = useState({}); // Stores ticks for all markets
-  const [clusterData, setClusterData] = useState({}); // Stores clusters for all markets
-  const [alertState, setAlertState] = useState({}); // Prevents multiple alerts per digit
+  const [tickData, setTickData] = useState({});
+  const [clusterData, setClusterData] = useState({});
+  const [alertState, setAlertState] = useState({});
+  const [digitColors, setDigitColors] = useState({});
+  const [clusterThreshold, setClusterThreshold] = useState(4);
 
   useEffect(() => {
     const sockets = {};
@@ -49,7 +51,7 @@ const App = () => {
     return () => {
       Object.values(sockets).forEach((s) => s.close());
     };
-  }, []);
+  }, [clusterThreshold]);
 
   const speak = (text) => {
     const synth = window.speechSynthesis;
@@ -81,25 +83,32 @@ const App = () => {
       counted[c.digit] = (counted[c.digit] || 0) + 1;
     });
 
-    const sniperDigit = Object.keys(counted).find((d) => counted[d] >= 3);
+    const sniperDigit = Object.keys(counted).find((d) => counted[d] >= clusterThreshold);
     setClusterData((prev) => ({ ...prev, [market]: clusters }));
 
     if (sniperDigit && !alertState[market + sniperDigit]) {
-      speak(`Sniper alert on ${market.replace("R_", "Vol ")}. Digit ${sniperDigit} formed 3 clusters.`);
+      speak(`Sniper alert on ${market.replace("R_", "Vol ")}. Digit ${sniperDigit} formed ${clusterThreshold} clusters.`);
       setAlertState((prev) => ({ ...prev, [market + sniperDigit]: true }));
+      const defaultColors = ["bg-yellow-500 text-black", "bg-green-500 text-black", "bg-red-500 text-white", "bg-blue-500 text-white", "bg-purple-500 text-white", "bg-pink-500 text-white"];
+      const digitClusterCount = counted[sniperDigit];
+      const assignedColor = defaultColors[(digitClusterCount - 1) % defaultColors.length];
+      setDigitColors((prev) => ({ ...prev, [market]: { ...(prev[market] || {}), [sniperDigit]: assignedColor } }));
     }
   };
 
   const getClusterClass = (market, i) => {
     const clusters = clusterData[market] || [];
+    const digits = tickData[market] || [];
+    const currentDigit = digits[i];
+    const colorMap = digitColors[market] || {};
+
     for (let idx = 0; idx < clusters.length; idx++) {
       const cluster = clusters[idx];
       const start = cluster.endIndex - cluster.length + 1;
       if (i >= start && i <= cluster.endIndex) {
-        if (idx === 0) return "bg-yellow-500 text-black";
-        if (idx === 1) return "bg-green-500 text-black";
-        if (idx === 2) return "bg-red-500 text-white";
-        return "bg-blue-500 text-white";
+        if (colorMap[cluster.digit]) return colorMap[cluster.digit];
+        const fallbackColors = ["bg-yellow-500 text-black", "bg-green-500 text-black", "bg-red-500 text-white", "bg-blue-500 text-white"];
+        return fallbackColors[idx % fallbackColors.length];
       }
     }
     return "bg-gray-900";
@@ -107,7 +116,20 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
-      <h1 className="text-xl mb-6">🎯 Sniper Bot v4.5 - Multi Market</h1>
+      <h1 className="text-xl mb-4">🎯 Sniper Bot v4.7 – Dynamic Clusters</h1>
+      <div className="mb-6">
+        <label htmlFor="threshold" className="mr-2">Cluster Threshold:</label>
+        <select
+          id="threshold"
+          value={clusterThreshold}
+          onChange={(e) => setClusterThreshold(Number(e.target.value))}
+          className="bg-gray-800 border border-green-500 text-green-300 px-2 py-1"
+        >
+          {[3, 4, 5, 6].map((val) => (
+            <option key={val} value={val}>{val}</option>
+          ))}
+        </select>
+      </div>
 
       {VOLS.map((market) => (
         <div key={market} className="mb-8 border-t border-gray-700 pt-4">

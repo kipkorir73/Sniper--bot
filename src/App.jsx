@@ -9,6 +9,7 @@ const App = () => {
   const [alertState, setAlertState] = useState({});
   const [digitColors, setDigitColors] = useState({});
   const [clusterThreshold, setClusterThreshold] = useState(4);
+  const [clusterStats, setClusterStats] = useState({});
 
   useEffect(() => {
     const sockets = {};
@@ -31,7 +32,7 @@ const App = () => {
       socket.onmessage = (e) => {
         const data = JSON.parse(e.data);
         if (data.msg_type === "tick") {
-          const digit = parseInt(data.tick.quote.toString().slice(-1));
+          const digit = Number(data.tick.quote.toString().slice(-1));
           setTickData((prev) => {
             const updated = {
               ...prev,
@@ -86,6 +87,18 @@ const App = () => {
     const sniperDigit = Object.keys(counted).find((d) => counted[d] >= clusterThreshold);
     setClusterData((prev) => ({ ...prev, [market]: clusters }));
 
+    // Update success stats
+    let statsUpdate = { ...clusterStats };
+    Object.keys(counted).forEach((digit) => {
+      const count = counted[digit];
+      if (count === 3) {
+        statsUpdate["3"] = (statsUpdate["3"] || 0) + 1;
+      } else if (count === 4) {
+        statsUpdate["4"] = (statsUpdate["4"] || 0) + 1;
+      }
+    });
+    setClusterStats(statsUpdate);
+
     if (sniperDigit && !alertState[market + sniperDigit]) {
       speak(`Sniper alert on ${market.replace("R_", "Vol ")}. Digit ${sniperDigit} formed ${clusterThreshold} clusters.`);
       setAlertState((prev) => ({ ...prev, [market + sniperDigit]: true }));
@@ -116,7 +129,7 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
-      <h1 className="text-xl mb-4">🎯 Sniper Bot v4.7 – Dynamic Clusters</h1>
+      <h1 className="text-xl mb-4">🎯 Sniper Bot v4.8 – Pattern Tracker</h1>
       <div className="mb-6">
         <label htmlFor="threshold" className="mr-2">Cluster Threshold:</label>
         <select
@@ -129,6 +142,12 @@ const App = () => {
             <option key={val} value={val}>{val}</option>
           ))}
         </select>
+      </div>
+
+      <div className="mb-6">
+        <h2 className="text-lg mb-2">📈 Cluster Stats:</h2>
+        <p>🔁 3 Clusters that stopped: {clusterStats["3"] || 0}</p>
+        <p>🔁 4 Clusters that stopped: {clusterStats["4"] || 0}</p>
       </div>
 
       {VOLS.map((market) => (

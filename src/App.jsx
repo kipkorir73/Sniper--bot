@@ -1,96 +1,124 @@
+// File: src/App.jsx
 import React, { useEffect, useState } from "react";
 
 const VOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
 const App = () => {
-  const [tickData, setTickData] = useState({});
-  const [wsConnections, setWsConnections] = useState({});
-  const [alerts, setAlerts] = useState([]);
+  const [market, setMarket] = useState("R_10");
+  const [ticks, setTicks] = useState([]);
+  const [ws, setWs] = useState(null);
+  const [clusters, setClusters] = useState([]);
+  const [alertPlayed, setAlertPlayed] = useState(false);
 
   const speak = (text) => {
     const synth = window.speechSynthesis;
+    const utterance = new SpeechSynthesisUtterance(text);
     synth.cancel();
-    synth.speak(new SpeechSynthesisUtterance(text));
+    synth.speak(utterance);
   };
 
   useEffect(() => {
-    const connections = {};
-    const data = {};
+    if (ws) ws.close();
+    const socket = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+    setWs(socket);
 
-    VOLS.forEach((vol) => {
-      data[vol] = [];
-      const socket = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-      connections[vol] = socket;
-
-      socket.onopen = () => {
-        socket.send(JSON.stringify({ ticks: vol }));
-      };
-
-      socket.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.msg_type === "tick") {
-          const digit = parseInt(msg.tick.quote.toString().slice(-1));
-          data[vol] = [digit, ...data[vol].slice(0, 29)];
-          setTickData((prev) => ({ ...prev, [vol]: [...data[vol]] }));
-          checkPattern(vol, data[vol]);
-        }
-      };
-    });
-
-    setWsConnections(connections);
-    return () => {
-      Object.values(connections).forEach((sock) => sock.close());
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ ticks: market }));
     };
-  }, []);
 
-  const checkPattern = (vol, digits) => {
-    const clusters = {};
-    let i = 0;
-    while (i < digits.length) {
-      let count = 1;
-      while (digits[i + count] === digits[i]) count++;
-      if (count >= 2) {
-        const digit = digits[i];
-        clusters[digit] = clusters[digit] ? clusters[digit] + 1 : 1;
-        i += count;
-      } else {
-        i++;
-      }
-    }
-
-    for (const [digit, count] of Object.entries(clusters)) {
-      if (count >= 3) {
-        const alertKey = `${vol}-${digit}`;
-        setAlerts((prev) => {
-          if (prev.some((a) => a.key === alertKey)) return prev;
-          speak(`Sniper alert on ${vol.replace("R_", "Vol ")}. Digit ${digit} repeated in 3 patterns.`);
-          return [...prev, { key: alertKey, vol, digit, time: new Date().toLocaleTimeString() }];
+    socket.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.msg_type === "tick") {
+        const digit = parseInt(data.tick.quote.toString().slice(-1));
+        setTicks((prev) => {
+          const updated = [digit, ...prev.slice(0, 29)];
+          detectSniperPattern(updated);
+          return updated;
         });
       }
+    };
+
+    return () => socket.close();
+  }, [market]);
+
+  const detectSniperPattern = (digits) => {
+    if (digits.length < 6) return;
+
+    const clusters = [];
+    let currentDigit = null;
+    let streak = 1;
+
+    for (let i = 1; i < digits.length; i++) {
+      if (digits[i] === digits[i - 1]) {
+        streak++;
+      } else {
+        if (streak >= 2) {
+          clusters.push({ digit: digits[i - 1], length: streak, endIndex: i - 1 });
+        }
+        streak = 1;
+      }
     }
+    if (streak >= 2) {
+      clusters.push({ digit: digits[digits.length - 1], length: streak, endIndex: digits.length - 1 });
+    }
+
+    const counted = {};
+    clusters.forEach((c) => {
+      counted[c.digit] = (counted[c.digit] || 0) + 1;
+    });
+
+    const sniperDigit = Object.keys(counted).find((d) => counted[d] >= 3);
+    if (sniperDigit && !alertPlayed) {
+      speak(`Sniper alert on ${market.replace("R_", "Vol ")}. Digit ${sniperDigit} formed 3 clusters.`);
+      setAlertPlayed(true);
+    } else if (!sniperDigit) {
+      setAlertPlayed(false);
+    }
+    setClusters(clusters);
+  };
+
+  const getClusterClass = (i) => {
+    for (let idx = 0; idx < clusters.length; idx++) {
+      const cluster = clusters[idx];
+      const start = cluster.endIndex - cluster.length + 1;
+      if (i >= start && i <= cluster.endIndex) {
+        if (idx === 0) return "bg-yellow-500 text-black";
+        if (idx === 1) return "bg-green-500 text-black";
+        if (idx === 2) return "bg-red-500 text-white";
+        return "bg-blue-500 text-white";
+      }
+    }
+    return "bg-gray-900";
   };
 
   return (
     <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
-      <h1 className="text-xl mb-4">🎯 Sniper Bot v3.5 - Multi Market</h1>
-      {VOLS.map((vol) => (
-        <div key={vol} className="mb-6 border border-green-700 p-4 rounded">
-          <h2 className="text-lg mb-2">{vol.replace("R_", "Vol ")}</h2>
-          <div className="grid grid-cols-10 gap-1">
-            {(tickData[vol] || []).map((tick, i) => (
-              <div key={i} className="bg-gray-900 p-2 text-center rounded border border-green-600">{tick}</div>
-            ))}
-          </div>
-        </div>
-      ))}
+      <h1 className="text-xl mb-4">🎯 Sniper Bot v4.0</h1>
+      <label className="mb-2 block">Select Market:</label>
+      <select
+        value={market}
+        onChange={(e) => setMarket(e.target.value)}
+        className="bg-gray-800 p-2 rounded"
+      >
+        {VOLS.map((v) => (
+          <option key={v} value={v}>
+            {v.replace("R_", "Vol ")}
+          </option>
+        ))}
+      </select>
 
       <div className="mt-6">
-        <h2 className="text-lg">🔔 Alerts</h2>
-        <ul className="mt-2 max-h-64 overflow-y-auto space-y-1 text-sm">
-          {alerts.map((alert, idx) => (
-            <li key={idx}>[{alert.time}] {alert.vol.replace("R_", "Vol ")} | Digit {alert.digit} triggered sniper alert</li>
+        <h2 className="text-lg">📉 Last 30 Digits:</h2>
+        <div className="grid grid-cols-10 gap-2 mt-2">
+          {ticks.map((tick, i) => (
+            <div
+              key={i}
+              className={`${getClusterClass(i)} p-2 text-center rounded border border-green-700`}
+            >
+              {tick}
+            </div>
           ))}
-        </ul>
+        </div>
       </div>
     </div>
   );

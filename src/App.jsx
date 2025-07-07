@@ -4,11 +4,52 @@ import React, { useEffect, useState } from "react";
 const VOLS = ["R_10", "R_25", "R_50", "R_75", "R_100"];
 
 const App = () => {
-  const [market, setMarket] = useState("R_10");
-  const [ticks, setTicks] = useState([]);
-  const [ws, setWs] = useState(null);
-  const [clusters, setClusters] = useState([]);
-  const [alertPlayed, setAlertPlayed] = useState(false);
+  const [tickData, setTickData] = useState({}); // Stores ticks for all markets
+  const [clusterData, setClusterData] = useState({}); // Stores clusters for all markets
+  const [alertState, setAlertState] = useState({}); // Prevents multiple alerts per digit
+
+  useEffect(() => {
+    const sockets = {};
+    const initialTicks = {};
+    const initialClusters = {};
+    const initialAlerts = {};
+
+    VOLS.forEach((market) => {
+      initialTicks[market] = [];
+      initialClusters[market] = [];
+      initialAlerts[market] = false;
+
+      const socket = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
+      sockets[market] = socket;
+
+      socket.onopen = () => {
+        socket.send(JSON.stringify({ ticks: market }));
+      };
+
+      socket.onmessage = (e) => {
+        const data = JSON.parse(e.data);
+        if (data.msg_type === "tick") {
+          const digit = parseInt(data.tick.quote.toString().slice(-1));
+          setTickData((prev) => {
+            const updated = {
+              ...prev,
+              [market]: [digit, ...(prev[market] || []).slice(0, 29)],
+            };
+            detectClusters(market, updated[market]);
+            return updated;
+          });
+        }
+      };
+    });
+
+    setTickData(initialTicks);
+    setClusterData(initialClusters);
+    setAlertState(initialAlerts);
+
+    return () => {
+      Object.values(sockets).forEach((s) => s.close());
+    };
+  }, []);
 
   const speak = (text) => {
     const synth = window.speechSynthesis;
@@ -17,35 +58,8 @@ const App = () => {
     synth.speak(utterance);
   };
 
-  useEffect(() => {
-    if (ws) ws.close();
-    const socket = new WebSocket("wss://ws.derivws.com/websockets/v3?app_id=1089");
-    setWs(socket);
-
-    socket.onopen = () => {
-      socket.send(JSON.stringify({ ticks: market }));
-    };
-
-    socket.onmessage = (e) => {
-      const data = JSON.parse(e.data);
-      if (data.msg_type === "tick") {
-        const digit = parseInt(data.tick.quote.toString().slice(-1));
-        setTicks((prev) => {
-          const updated = [digit, ...prev.slice(0, 29)];
-          detectSniperPattern(updated);
-          return updated;
-        });
-      }
-    };
-
-    return () => socket.close();
-  }, [market]);
-
-  const detectSniperPattern = (digits) => {
-    if (digits.length < 6) return;
-
+  const detectClusters = (market, digits) => {
     const clusters = [];
-    let currentDigit = null;
     let streak = 1;
 
     for (let i = 1; i < digits.length; i++) {
@@ -68,16 +82,16 @@ const App = () => {
     });
 
     const sniperDigit = Object.keys(counted).find((d) => counted[d] >= 3);
-    if (sniperDigit && !alertPlayed) {
+    setClusterData((prev) => ({ ...prev, [market]: clusters }));
+
+    if (sniperDigit && !alertState[market + sniperDigit]) {
       speak(`Sniper alert on ${market.replace("R_", "Vol ")}. Digit ${sniperDigit} formed 3 clusters.`);
-      setAlertPlayed(true);
-    } else if (!sniperDigit) {
-      setAlertPlayed(false);
+      setAlertState((prev) => ({ ...prev, [market + sniperDigit]: true }));
     }
-    setClusters(clusters);
   };
 
-  const getClusterClass = (i) => {
+  const getClusterClass = (market, i) => {
+    const clusters = clusterData[market] || [];
     for (let idx = 0; idx < clusters.length; idx++) {
       const cluster = clusters[idx];
       const start = cluster.endIndex - cluster.length + 1;
@@ -93,33 +107,23 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-black text-green-400 p-4 font-mono">
-      <h1 className="text-xl mb-4">🎯 Sniper Bot v4.0</h1>
-      <label className="mb-2 block">Select Market:</label>
-      <select
-        value={market}
-        onChange={(e) => setMarket(e.target.value)}
-        className="bg-gray-800 p-2 rounded"
-      >
-        {VOLS.map((v) => (
-          <option key={v} value={v}>
-            {v.replace("R_", "Vol ")}
-          </option>
-        ))}
-      </select>
+      <h1 className="text-xl mb-6">🎯 Sniper Bot v4.5 - Multi Market</h1>
 
-      <div className="mt-6">
-        <h2 className="text-lg">📉 Last 30 Digits:</h2>
-        <div className="grid grid-cols-10 gap-2 mt-2">
-          {ticks.map((tick, i) => (
-            <div
-              key={i}
-              className={`${getClusterClass(i)} p-2 text-center rounded border border-green-700`}
-            >
-              {tick}
-            </div>
-          ))}
+      {VOLS.map((market) => (
+        <div key={market} className="mb-8 border-t border-gray-700 pt-4">
+          <h2 className="text-lg mb-2">📊 {market.replace("R_", "Vol ")}</h2>
+          <div className="grid grid-cols-10 gap-2">
+            {(tickData[market] || []).map((tick, i) => (
+              <div
+                key={i}
+                className={`${getClusterClass(market, i)} p-2 text-center rounded border border-green-700`}
+              >
+                {tick}
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      ))}
     </div>
   );
 };
